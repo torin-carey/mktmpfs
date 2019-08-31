@@ -1,0 +1,124 @@
+#!/bin/bash
+
+function usage() {
+	echo "Usage:"
+	echo "$0 [--discard] [--fs FS] [--cipher CIPHER] [--mode MODE] [--owner OWNER] DEV MNT NAME" >&2
+	echo "$0 --remove DEV MNT NAME" >&2
+	exit 1
+}
+
+args=$(getopt -o drf:c:k:m:o: -l "discard,remove,fs:,cipher:,mode:,owner:" -- "$@")
+if [ $? != 0 ]; then
+	usage
+fi
+
+set -- $args
+unset args
+
+for i; do
+	case "$i" in
+	-d|--discard)
+		DISCARD=yes
+		shift;;
+	-f|--fs)
+		FS="$2"
+		shift 2;;
+	-c|--cipher)
+		CIPHER="$2"
+		shift 2;;
+	-m|--mode)
+		MODE="$2"
+		shift 2;;
+	-o|--owner)
+		OWNER="$2"
+		shift 2;;
+	-r|--remove)
+		REMOVE=yes
+		shift;;
+	--)
+		shift; break;;
+	esac
+done
+
+if [ -z "$FS" ]; then
+	FS=ext4
+fi
+
+if [ -z "$CIPHER" ]; then
+	CIPHER=aes-xts-plain64
+fi
+
+if [ -z "$DEV" ]; then
+	DEV="$1"
+	if [ -z "$DEV" ]; then
+		echo "Missing DEV" >&2
+		usage
+	fi
+fi
+
+if [ -z "$MNT" ]; then
+	MNT="$2"
+	if [ -z "$MNT" ]; then
+		echo "Missing MNT" >&2
+		usage
+	fi
+fi
+
+if [ -z "$NAME" ]; then
+	NAME="$3"
+	if [ -z "$NAME" ]; then
+		echo "Missing NAME" >&2
+		usage
+	fi
+fi
+
+if [ "x$REMOVE" = "xyes" ]; then
+	if ! umount "$MNT"; then
+		echo "umount failed ($?)" >&2
+		exit 2
+	fi
+	if ! cryptsetup close "$NAME"; then
+		echo "cryptsetup failed ($?)" >&2
+		exit 2
+	fi
+	if [ "x$DISCARD" = "xyes" ]; then
+		blkdiscard "$DEV"
+	fi
+	exit 0
+fi
+
+if [ "x$DISCARD" = "xyes" ]; then
+	blkdiscard "$DEV"
+fi
+
+
+if [ "x$DISCARD" = "xyes" ]; then
+	CRYPT_OPT="$CRYPT_OPT --allow-discards"
+	MOUNT_OPT="$MOUNT_OPT -o discard"
+fi
+
+if ! cryptsetup open --type plain --key-file /dev/urandom  --cipher "$CIPHER" "$DEV" "$NAME" $CRYPT_OPT
+then
+	echo "cryptsetup failed ($?)" >&2
+	exit 2
+fi
+
+if ! mkfs."$FS" "/dev/mapper/$NAME"; then
+	echo "mkfs.$FS failed ($?)" >&2
+	cryptsetup close "$NAME"
+	exit 2
+fi
+
+if ! mount "/dev/mapper/$NAME" "$MNT" $MOUNT_OPT; then
+	echo "mount failed ($?)" >&2
+	cryptsetup close "$NAME" --deferred
+	exit 2
+fi
+
+if [ -n "$OWNER" ]; then
+	chown "$OWNER" "$MNT"
+fi
+
+if [ -n "$MODE" ]; then
+	chmod "$MODE" "$MNT"
+fi

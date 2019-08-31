@@ -1,0 +1,12 @@
+[Unit]
+Description=Temporary filesystem for %i.
+
+[Service]
+EnvironmentFile=/usr/local/lib/mktmpfs/%i.conf
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/mktmpfs
+ExecStop=/usr/local/sbin/mktmpfs --remove
+
+[Install]
+WantedBy=multi-user.target
